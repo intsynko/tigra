@@ -125,6 +125,11 @@ class User(AbstractUser):
     last_telegram_bot_visit_date = models.DateField(
         blank=True, null=True, verbose_name='Дата последнего визита в телеграм бот'
     )
+    telegram_chat_id = models.BigIntegerField(
+        blank=True, null=True,
+        verbose_name='Telegram Chat ID',
+        help_text='Chat ID пользователя в Telegram для отправки уведомлений'
+    )
     last_admin_activity_date = models.DateTimeField(
         blank=True, null=True, verbose_name='Дата последнего действия в админке'
     )
