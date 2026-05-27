@@ -9,3 +9,5 @@ venv
 /db/
 /.github/
 /telegram_client/data/
+docker-compose.local.yaml
+/structure/

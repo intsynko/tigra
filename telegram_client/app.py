@@ -192,7 +192,7 @@ async def select_visit_store(update: Update, context: ContextTypes.DEFAULT_TYPE)
     is_free_visit = await django_client.user_has_free_visit(django_user)
     if is_free_visit:
         buttons.append(
-            [InlineKeyboardButton("Использовать бонусное посещение", callback_data="slot_30")]
+            [InlineKeyboardButton("Использовать бонусное посещение (30 минут)", callback_data="slot_30")]
         )
     cnt_to_free_visit = await django_client.user_count_to_free_visit(django_user)
     if is_free_visit:
@@ -217,43 +217,46 @@ async def main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get("editing_child"):
         return await edit_child(update, context)
 
+    # Проверяем, есть ли активное посещение
     if text == "Создать посещение":
-        store = (await django_user.user).store
-        if not store:
-            stores = await django_client.get_stores()
-            if not stores:
-                await update.message.reply_text("Нет доступных точек.")
-                return
-            store_buttons = [
-                [InlineKeyboardButton(
-                    s.address,
-                    callback_data=f"visits_store_{s.id}"
-                )]
-                for s in stores
-            ]
+        loop = asyncio.get_event_loop()
+        active_visit = await django_client.get_active_visit(django_user.id)
+        if active_visit:
+            end_time = await django_client.get_visit_end_time(active_visit)
             await update.message.reply_text(
-                "Выберите точку:",
-                reply_markup=InlineKeyboardMarkup(store_buttons)
+                f"У вас уже есть активное посещение до {localtime(end_time).strftime('%d.%m.%Y %H:%M')}.\n"
+                f"Дождитесь завершения текущего посещения перед созданием нового или обратитесь к администратору.",
+                reply_markup=get_main_menu()
             )
             return
 
-        buttons = [
-            [InlineKeyboardButton("1 час", callback_data="slot_60")]
-        ]
-        is_free_visit = await django_client.user_has_free_visit(django_user)
-        if is_free_visit:
-            buttons.append(
-                [InlineKeyboardButton("Использовать бонусное посещение", callback_data="slot_30")]
-            )
-        cnt_to_free_visit = await django_client.user_count_to_free_visit(django_user)
-        if is_free_visit:
-            text = "Выберите слот времени:"
-        else:
-            text = f"Выберите слот времени (до бонусного визита {cnt_to_free_visit} посещения):"
-        await update.message.reply_text(
-            text,
-            reply_markup=InlineKeyboardMarkup(buttons)
+        pending_visit = await loop.run_in_executor(
+            None, lambda: django_client.get_pending_visit_sync(django_user.id, CONFIRMATION_TIMEOUT_MINUTES)
         )
+        if pending_visit:
+            await update.message.reply_text(
+                f"У вас уже есть неподтверждённое посещение от {localtime(pending_visit.date).strftime('%d.%m.%Y %H:%M')}.\n"
+                f"Подтвердите посещение у администратора до {(localtime(pending_visit.date) + timedelta(minutes=10)).strftime('%d.%m.%Y %H:%M')}, иначе оно будет автоматически отменено.",
+                reply_markup=get_main_menu()
+            )
+            return
+
+        stores = await django_client.get_stores()
+        if not stores:
+            await update.message.reply_text("Нет доступных точек.")
+            return
+        store_buttons = [
+            [InlineKeyboardButton(
+                s.address,
+                callback_data=f"visits_store_{s.id}"
+            )]
+            for s in stores
+        ]
+        await update.message.reply_text(
+            "Выберите точку:",
+            reply_markup=InlineKeyboardMarkup(store_buttons)
+        )
+        return
 
     elif text == "Список посещений":
         visits = await django_client.get_user_visits(django_user)
@@ -483,8 +486,16 @@ async def select_participants(update: Update, context: ContextTypes.DEFAULT_TYPE
         slot = context.user_data["selected_slot"]
         children_ids = context.user_data["selected_children"]
 
+        store_id = context.user_data.get("pending_store_id")
+        if not store_id:
+            await query.message.reply_text(
+                "Ошибка: точка посещения не выбрана. Начните создание посещения заново /start",
+                reply_markup=get_main_menu()
+            )
+            return
+
         visit = await django_client.create_visit(
-            django_user, slot, children_ids, context.user_data.get("pending_store_id")
+            django_user, slot, children_ids, store_id
         )
 
         children_names = await django_client.get_visit_children_names(visit)
@@ -494,11 +505,11 @@ async def select_participants(update: Update, context: ContextTypes.DEFAULT_TYPE
         del context.user_data["selected_slot"]
         del context.user_data["selected_children"]
 
-        duration = visit.duration // 3600
-        if duration < 1:
-            duration_str = f"{int(duration * 60)} м."
+        duration_minutes = visit.duration // 60
+        if duration_minutes >= 60:
+            duration_str = f"{duration_minutes // 60} ч."
         else:
-            duration_str = f"{duration} ч."
+            duration_str = f"{duration_minutes} мин."
 
         context.user_data["pending_visit_id"] = visit.id
 
@@ -532,7 +543,7 @@ async def select_participants(update: Update, context: ContextTypes.DEFAULT_TYPE
                 "django_user_id": django_user_id,
                 "visit_id": visit.id
             },
-            job_kwargs={"misfire_grace_time": None}
+            job_kwargs={"misfire_grace_time": 60}
         )
 
     elif data.startswith("child_"):

@@ -5,7 +5,7 @@ import typing
 import django
 from datetime import datetime, timedelta
 from asgiref.sync import sync_to_async
-from django.utils.timezone import localtime
+from django.utils.timezone import localtime, now as django_now
 
 # Добавляем путь к Django проекту
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -252,13 +252,15 @@ class DjangoClient:
             return None
 
     @staticmethod
-    def get_pending_visit_sync(user_id: int) -> typing.Optional[Visit]:
-        """Получить неподтверждённое посещение пользователя (sync версия)."""
+    def get_pending_visit_sync(user_id: int, timeout_minutes: int = 10) -> typing.Optional[Visit]:
+        """Получить неподтверждённое посещение пользователя (sync версия), не старше timeout_minutes."""
         try:
+            cutoff_time = django_now() - timedelta(minutes=timeout_minutes)
             return Visit.objects.filter(
                 user_id=user_id,
                 is_confirmed=False,
-                is_active=True
+                is_active=True,
+                date__gt=cutoff_time
             ).select_related('store').prefetch_related('children').first()
         except Visit.DoesNotExist:
             return None
@@ -292,13 +294,19 @@ class DjangoClient:
     @staticmethod
     @sync_to_async
     def get_active_visit(user_id: int) -> typing.Optional[Visit]:
-        """Получить активное подтверждённое посещение пользователя."""
+        """Получить активное подтверждённое посещение пользователя (с проверкой времени окончания)."""
         try:
-            return Visit.objects.filter(
+            current_time = django_now()
+            visits = Visit.objects.filter(
                 user_id=user_id,
                 is_confirmed=True,
-                is_active=True
-            ).select_related('store').prefetch_related('children').first()
+            ).select_related('store').prefetch_related('children')
+
+            for visit in visits:
+                end_time = visit.date + timedelta(seconds=visit.duration)
+                if end_time > current_time:
+                    return visit
+            return None
         except Visit.DoesNotExist:
             return None
 

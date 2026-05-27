@@ -21,7 +21,8 @@ def make_report() -> io.BytesIO:
             "last_visit_date",
             "last_visit_store",
             "last_mobile_app_visit_date",
-            "date_joined"
+            "date_joined",
+            "comment_from_staff",
         )
     )
     wb = xlwt.Workbook()
@@ -38,7 +39,8 @@ def make_report() -> io.BytesIO:
         "Последний визит",
         "Последний визит точка",
         "Последний вход в мобильное приложение",
-        "Дата регистрации"
+        "Дата регистрации",
+        "Комментарий сотрудника",
     ]
     for column, heading in enumerate(header):
         sheet.write(0, column, heading)
